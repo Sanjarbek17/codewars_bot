@@ -20,7 +20,7 @@ from visualizations import (
 )
 
 
-async def reply_to_message(message, text=None, photo=None):
+async def reply_to_message(message, text=None, photo=None, reply_markup=None):
     """Helper function to reply to messages."""
     try:
         kwargs = {
@@ -30,6 +30,9 @@ async def reply_to_message(message, text=None, photo=None):
             "chat_id": message.chat_id,
             "reply_to_message_id": message.message_id,
         }
+
+        if reply_markup:
+            kwargs["reply_markup"] = reply_markup
 
         if text:
             await message.get_bot().send_message(text=text, **kwargs)
