@@ -18,6 +18,9 @@ A Telegram bot that integrates with Codewars to help users track their progress,
 /joingroup - See available groups to join
 /mystats - See your Codewars statistics
 /groupstats - See your group's statistics
+/daily - View today's and yesterday's kata completions
+/weekly - View last 7 days of kata completions
+/help - Show list of commands and get assistance
 
 ## Prerequisites
 

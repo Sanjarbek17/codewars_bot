@@ -1,5 +1,6 @@
-python-telegram-bot
-tinydb
-requests
+python-telegram-bot>=20.0
 python-dotenv
+requests
 matplotlib
+numpy
+tinydb
