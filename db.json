@@ -5,26 +5,9 @@
             "creator_id": 6389775623,
             "members": [
                 6389775623,
-                2058840114
+                2058840114,
+                7323671906
             ]
-        },
-        "2": {
-            "name": "Test",
-            "group_id": -1002624025027,
-            "chat_type": "supergroup",
-            "members": [
-                2058840114
-            ],
-            "creator_id": 6389775623,
-            "is_forum": null
-        },
-        "3": {
-            "name": "Python 7 half",
-            "group_id": -1002576168668,
-            "chat_type": "supergroup",
-            "members": [],
-            "creator_id": 6389775623,
-            "is_forum": true
         }
     },
     "users": {
@@ -51,6 +34,19 @@
                     "completed_katas": 410,
                     "honor": 992,
                     "rank": "4 kyu"
+                }
+            ]
+        },
+        "3": {
+            "telegram_id": 7323671906,
+            "codewars_username": "HUSANBOI001",
+            "completed_katas": 328,
+            "history": [
+                {
+                    "date": "2025-05-14",
+                    "completed_katas": 328,
+                    "honor": 1271,
+                    "rank": "3 kyu"
                 }
             ]
         }

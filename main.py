@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import numpy as np  # Add numpy import
 from matplotlib import pyplot as plt
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -733,6 +734,172 @@ async def daily_group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_to_message(update.message, photo=buf)
 
 
+async def weekly_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show weekly kata completion statistics for group members."""
+    user_id = update.effective_user.id
+    Group = Query()
+    user_groups = groups_table.search(Group.members.any([user_id]))
+
+    if not user_groups:
+        await reply_to_message(update.message, text="You're not a member of any group!")
+        return
+
+    from datetime import datetime, timedelta
+
+    # Get dates for the last 7 days
+    today = datetime.now()
+    dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    dates.reverse()  # So we show oldest to newest
+
+    for group in user_groups:
+        # Initialize data collection
+        member_stats = []
+
+        # Get stats for each member
+        for member_id in group["members"]:
+            User = Query()
+            user = users_table.get(User.telegram_id == member_id)
+            if user:
+                try:
+                    response = requests.get(
+                        f"{CODEWARS_API_BASE}{user['codewars_username']}"
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+
+                        # Get completed challenges
+                        challenges_response = requests.get(
+                            f"{CODEWARS_API_BASE}{user['codewars_username']}/code-challenges/completed"
+                        )
+
+                        if challenges_response.status_code == 200:
+                            challenges = challenges_response.json()["data"]
+
+                            # Count completions for each day
+                            daily_counts = {date: 0 for date in dates}
+                            for challenge in challenges:
+                                completed_date = challenge["completedAt"][
+                                    :10
+                                ]  # YYYY-MM-DD
+                                if completed_date in daily_counts:
+                                    daily_counts[completed_date] += 1
+
+                            member_stats.append(
+                                {
+                                    "username": data["username"],
+                                    "rank": data["ranks"]["overall"]["name"],
+                                    "honor": data["honor"],
+                                    "daily_counts": daily_counts,
+                                    "total_week": sum(daily_counts.values()),
+                                }
+                            )
+                except Exception as e:
+                    logger.error(f"Error fetching stats for user: {e}")
+                    continue
+
+        if not member_stats:
+            await reply_to_message(
+                update.message, text=f"No data available for group: {group['name']}"
+            )
+            continue
+
+        # Sort members by total weekly completions
+        member_stats.sort(key=lambda x: (-x["total_week"], -x["honor"]))
+
+        # Create visualization
+        plt.style.use("dark_background")
+        fig, ax = plt.subplots(figsize=(15, 8))
+
+        # Set up the plot
+        bar_width = 0.8 / len(member_stats)
+        colors = plt.cm.Set3(np.linspace(0, 1, len(member_stats)))
+
+        # Plot bars for each member
+        for idx, member in enumerate(member_stats):
+            daily_values = [member["daily_counts"][date] for date in dates]
+            x = np.arange(len(dates))
+            bars = ax.bar(
+                x + idx * bar_width,
+                daily_values,
+                bar_width,
+                label=member["username"],
+                color=colors[idx],
+                alpha=0.8,
+            )
+
+            # Add value labels on bars
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0:
+                    ax.annotate(
+                        f"{int(height)}",
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                    )
+
+        # Customize the plot
+        ax.set_ylabel("Completed Katas")
+        ax.set_title(f"Weekly Kata Completions - {group['name']}")
+        ax.set_xticks(
+            np.arange(len(dates)) + (bar_width * len(member_stats)) / 2 - bar_width / 2
+        )
+        ax.set_xticklabels(
+            [datetime.strptime(d, "%Y-%m-%d").strftime("%b %d") for d in dates],
+            rotation=45,
+            ha="right",
+        )
+        ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+        plt.tight_layout()
+
+        # Save plot to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+        buf.seek(0)
+        plt.close()
+
+        # Prepare stats message
+        stats_msg = f"📊 Weekly Statistics for {group['name']}\n\n"
+        stats_msg += f"Period: {dates[0]} to {dates[-1]}\n\n"
+
+        for member in member_stats:
+            daily_counts = member["daily_counts"]
+            stats_msg += (
+                f"👤 {member['username']} ({member['rank']})\n"
+                f"├ Total this week: {member['total_week']} katas\n"
+                f"├ Daily breakdown:\n"
+            )
+            for date in dates:
+                count = daily_counts[date]
+                day_name = datetime.strptime(date, "%Y-%m-%d").strftime("%a %b %d")
+                bar = "█" * count if count > 0 else "░"
+                stats_msg += f"│  {day_name}: {bar} {count}\n"
+            stats_msg += f"└ Honor: {member['honor']}\n\n"
+
+        # Add group summary
+        total_week = sum(member["total_week"] for member in member_stats)
+        daily_totals = {
+            date: sum(member["daily_counts"][date] for member in member_stats)
+            for date in dates
+        }
+        max_day = max(daily_totals.items(), key=lambda x: x[1])
+        max_day_name = datetime.strptime(max_day[0], "%Y-%m-%d").strftime("%a %b %d")
+
+        stats_msg += (
+            f"📈 Group Summary:\n"
+            f"├ Total Katas This Week: {total_week}\n"
+            f"├ Average per Day: {total_week/7:.1f}\n"
+            f"└ Most Active Day: {max_day_name} ({max_day[1]} katas)\n"
+        )
+
+        # Send stats and visualization
+        await reply_to_message(update.message, text=stats_msg)
+        await reply_to_message(update.message, photo=buf)
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show list of commands."""
     help_text = """
@@ -741,7 +908,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 /register [username] - Register your Codewars account
 /stats - View your Codewars statistics
 /group - View group leaderboard
-/daily - View today's and yesterday's kata completions for your group
+/daily - View today's and yesterday's kata completions
+/weekly - View last 7 days of kata completions
 /join [group_name] - Join or create a group
 /groups - List all groups
 /help - Show this help message
@@ -773,6 +941,7 @@ def main():
     application.add_handler(CommandHandler("mystats", my_stats))
     application.add_handler(CommandHandler("groupstats", group_stats))
     application.add_handler(CommandHandler("daily", daily_group_stats))
+    application.add_handler(CommandHandler("weekly", weekly_stats))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     # Add handler for group updates (when bot is added to group)
