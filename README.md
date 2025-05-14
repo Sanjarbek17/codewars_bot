@@ -10,6 +10,15 @@ A Telegram bot that integrates with Codewars to help users track their progress,
 - Track user progress and statistics
 - Receive daily coding challenges
 
+## Commands
+
+/start - Welcome message and list of available commands
+/register [codewars_username] - Register your Codewars account
+/creategroup [group_name] - Create a new group
+/joingroup - See available groups to join
+/mystats - See your Codewars statistics
+/groupstats - See your group's statistics
+
 ## Prerequisites
 
 - Python 3.13+
