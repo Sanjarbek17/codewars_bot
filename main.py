@@ -7,8 +7,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from config import TELEGRAM_BOT_TOKEN, logger
-from bot.handlers import (
+from .config import TELEGRAM_BOT_TOKEN, logger
+from .bot.handlers import (
     start,
     register,
     my_stats,
@@ -21,6 +21,7 @@ from bot.handlers import (
     create_group,
     join_group,
 )
+
 
 def handler(application: Application):
     # Add command handlers
@@ -39,7 +40,7 @@ def handler(application: Application):
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_group_update)
     )
-    
+
     return application
 
 
