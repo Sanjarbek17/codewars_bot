@@ -526,7 +526,7 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send stats message
         stats = f"📊 Statistics for group: {group['name']}\n"
         for username, katas, honor in zip(usernames, completed_katas, honor_points):
-            stats += f"\n{username}: {completed_katas}\n"
+            stats += f"\n{username}: {katas}"
 
         # Send text stats and image
         await reply_to_message(update.message, text=stats)
@@ -569,6 +569,188 @@ async def handle_group_update(update: Update, context: ContextTypes.DEFAULT_TYPE
                     )
 
 
+async def daily_group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show today's and yesterday's kata completion statistics for group members."""
+    user_id = update.effective_user.id
+    Group = Query()
+    user_groups = groups_table.search(Group.members.any([user_id]))
+
+    if not user_groups:
+        await reply_to_message(update.message, text="You're not a member of any group!")
+        return
+
+    from datetime import datetime, timedelta
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    for group in user_groups:
+        # Initialize data collection
+        member_stats = []
+
+        # Get stats for each member
+        for member_id in group["members"]:
+            User = Query()
+            user = users_table.get(User.telegram_id == member_id)
+            if user:
+                try:
+                    response = requests.get(
+                        f"{CODEWARS_API_BASE}{user['codewars_username']}"
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+
+                        # Get completed challenges for today and yesterday
+                        challenges_response = requests.get(
+                            f"{CODEWARS_API_BASE}{user['codewars_username']}/code-challenges/completed"
+                        )
+
+                        if challenges_response.status_code == 200:
+                            challenges = challenges_response.json()["data"]
+                            today_completed = sum(
+                                1
+                                for c in challenges
+                                if c["completedAt"].startswith(today)
+                            )
+                            yesterday_completed = sum(
+                                1
+                                for c in challenges
+                                if c["completedAt"].startswith(yesterday)
+                            )
+
+                            member_stats.append(
+                                {
+                                    "username": data["username"],
+                                    "today": today_completed,
+                                    "yesterday": yesterday_completed,
+                                    "rank": data["ranks"]["overall"]["name"],
+                                    "honor": data["honor"],
+                                }
+                            )
+                except Exception as e:
+                    logger.error(f"Error fetching stats for user: {e}")
+                    continue
+
+        if not member_stats:
+            await reply_to_message(
+                update.message, text=f"No data available for group: {group['name']}"
+            )
+            continue
+
+        # Sort members by today's completions
+        member_stats.sort(key=lambda x: (-x["today"], -x["yesterday"], -x["honor"]))
+
+        # Create visualization
+        plt.style.use("dark_background")
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        # Prepare data for plotting
+        usernames = [stat["username"] for stat in member_stats]
+        today_katas = [stat["today"] for stat in member_stats]
+        yesterday_katas = [stat["yesterday"] for stat in member_stats]
+
+        # Set the positions of the bars
+        x = range(len(usernames))
+        width = 0.35
+
+        # Create bars
+        today_bars = ax.bar(
+            [i - width / 2 for i in x],
+            today_katas,
+            width,
+            label="Today",
+            color="cyan",
+            alpha=0.8,
+        )
+        yesterday_bars = ax.bar(
+            [i + width / 2 for i in x],
+            yesterday_katas,
+            width,
+            label="Yesterday",
+            color="yellow",
+            alpha=0.5,
+        )
+
+        # Customize the plot
+        ax.set_ylabel("Completed Katas")
+        ax.set_title(f"Daily Kata Completions - {group['name']}")
+        ax.set_xticks(x)
+        ax.set_xticklabels(usernames, rotation=45, ha="right")
+        ax.legend()
+
+        # Add value labels on bars
+        def autolabel(bars):
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0:  # Only show label if there are completed katas
+                    ax.annotate(
+                        f"{int(height)}",
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                    )
+
+        autolabel(today_bars)
+        autolabel(yesterday_bars)
+
+        plt.tight_layout()
+
+        # Save plot to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+        buf.seek(0)
+        plt.close()
+
+        # Prepare stats message
+        stats_msg = f"📊 Daily Statistics for {group['name']}\n\n"
+        stats_msg += f"Date: {today}\n\n"
+
+        for stat in member_stats:
+            stats_msg += (
+                f"👤 {stat['username']} ({stat['rank']})\n"
+                f"├ Today: {stat['today']} katas\n"
+                f"├ Yesterday: {stat['yesterday']} katas\n"
+                f"└ Honor: {stat['honor']}\n\n"
+            )
+
+        # Add group summary
+        total_today = sum(stat["today"] for stat in member_stats)
+        total_yesterday = sum(stat["yesterday"] for stat in member_stats)
+        change = total_today - total_yesterday
+        change_symbol = "📈" if change > 0 else "📉" if change < 0 else "➖"
+
+        stats_msg += (
+            f"📈 Group Summary:\n"
+            f"├ Total Today: {total_today} katas\n"
+            f"├ Total Yesterday: {total_yesterday} katas\n"
+            f"└ Day-over-day change: {change_symbol} {abs(change)} katas\n"
+        )
+
+        # Send stats and visualization
+        await reply_to_message(update.message, text=stats_msg)
+        await reply_to_message(update.message, photo=buf)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show list of commands."""
+    help_text = """
+🤖 Available Commands:
+
+/register [username] - Register your Codewars account
+/stats - View your Codewars statistics
+/group - View group leaderboard
+/daily - View today's and yesterday's kata completions for your group
+/join [group_name] - Join or create a group
+/groups - List all groups
+/help - Show this help message
+
+Need help? Message @YourAdminUsername
+"""
+    await update.message.reply_text(help_text)
+
+
 def main():
     """Start the bot."""
     # Load environment variables from .env file
@@ -590,9 +772,10 @@ def main():
     application.add_handler(CommandHandler("joingroup", join_group))
     application.add_handler(CommandHandler("mystats", my_stats))
     application.add_handler(CommandHandler("groupstats", group_stats))
+    application.add_handler(CommandHandler("daily", daily_group_stats))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(button_callback))
     # Add handler for group updates (when bot is added to group)
-    application.add_handler(CommandHandler("help", start))  # Add help command
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_group_update)
     )
