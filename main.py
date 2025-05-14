@@ -18,8 +18,11 @@ from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.DEBUG,  # Changed to DEBUG for more detailed logging
+    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
 )
+logger = logging.getLogger(__name__)
 
 # Initialize TinyDB
 db = TinyDB("db.json")
@@ -32,18 +35,32 @@ CODEWARS_API_BASE = "https://www.codewars.com/api/v1/users/"
 
 async def reply_to_message(message, text=None, photo=None):
     """Helper function to reply to messages, handling both regular groups and forum topics."""
-    kwargs = {
-        "message_thread_id": (
-            message.message_thread_id if message.is_topic_message else None
-        ),
-        "chat_id": message.chat_id,
-        "reply_to_message_id": message.message_id,
-    }
+    try:
+        kwargs = {
+            "message_thread_id": (
+                message.message_thread_id if message.is_topic_message else None
+            ),
+            "chat_id": message.chat_id,
+            "reply_to_message_id": message.message_id,
+        }
 
-    if text:
-        await message.get_bot().send_message(text=text, **kwargs)
-    if photo:
-        await message.get_bot().send_photo(photo=photo, **kwargs)
+        if text:
+            logger.debug(f"Sending text message: {text[:50]}...")
+            await message.get_bot().send_message(text=text, **kwargs)
+            logger.debug("Text message sent successfully")
+
+        if photo:
+            logger.debug("Attempting to send photo...")
+            try:
+                photo.seek(0)  # Ensure we're at the start of the buffer
+                await message.get_bot().send_photo(photo=photo, **kwargs)
+                logger.debug("Photo sent successfully")
+            except Exception as photo_error:
+                logger.error(f"Error sending photo: {photo_error}", exc_info=True)
+                raise
+    except Exception as e:
+        logger.error(f"Error in reply_to_message: {e}", exc_info=True)
+        raise
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,12 +99,34 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         user_data = response.json()
+        current_completed = user_data["codeChallenges"]["totalCompleted"]
         User = Query()
+
+        # Get existing user data if any
+        existing_user = users_table.get(User.telegram_id == telegram_id)
+        history = []
+        if existing_user and "history" in existing_user:
+            history = existing_user["history"]
+
+        # Add current stats to history
+        from datetime import datetime
+
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        history.append(
+            {
+                "date": current_date,
+                "completed_katas": current_completed,
+                "honor": user_data["honor"],
+                "rank": user_data["ranks"]["overall"]["name"],
+            }
+        )
+
         users_table.upsert(
             {
                 "telegram_id": telegram_id,
                 "codewars_username": codewars_username,
-                "completed_katas": user_data["codeChallenges"]["totalCompleted"],
+                "completed_katas": current_completed,
+                "history": history,
             },
             User.telegram_id == telegram_id,
         )
@@ -171,33 +210,211 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user's Codewars statistics."""
-    user_id = update.effective_user.id
-    User = Query()
-    user = users_table.get(User.telegram_id == user_id)
-
-    if not user:
-        await update.message.reply_text(
-            "Please register first using /register [codewars_username]"
-        )
-        return
+    """Show user's Codewars statistics with historical progress."""
+    logger.debug("Starting my_stats command handling")
 
     try:
-        response = requests.get(f"{CODEWARS_API_BASE}{user['codewars_username']}")
-        if response.status_code == 200:
-            data = response.json()
-            stats = (
-                f"📊 Your Codewars Statistics:\n\n"
-                f"Username: {data['username']}\n"
-                f"Rank: {data['ranks']['overall']['name']}\n"
-                f"Honor: {data['honor']}\n"
-                f"Total Completed Kata: {data['codeChallenges']['totalCompleted']}\n"
+        user_id = update.effective_user.id
+        User = Query()
+        user = users_table.get(User.telegram_id == user_id)
+
+        if not user:
+            await reply_to_message(
+                update.message,
+                text="Please register first using /register [codewars_username]",
             )
-            await update.message.reply_text(stats)
-        else:
-            await update.message.reply_text("Error fetching your Codewars statistics.")
+            return
+
+        # Fetch current Codewars data and completed challenges
+        logger.debug(f"Fetching Codewars data for {user['codewars_username']}")
+        # Get user profile data
+        profile_response = requests.get(
+            f"{CODEWARS_API_BASE}{user['codewars_username']}"
+        )
+
+        if profile_response.status_code != 200:
+            logger.error(
+                f"Failed to fetch Codewars data: {profile_response.status_code}"
+            )
+            await reply_to_message(
+                update.message,
+                text="Failed to fetch Codewars data. Please try again later.",
+            )
+            return
+
+        data = profile_response.json()
+
+        # Get completed challenges data
+        logger.debug("Fetching completed challenges")
+        completed_challenges = []
+        page = 0
+
+        while True:
+            challenges_response = requests.get(
+                f"{CODEWARS_API_BASE}{user['codewars_username']}/code-challenges/completed?page={page}"
+            )
+            if challenges_response.status_code != 200:
+                break
+
+            challenges_data = challenges_response.json()
+            if not challenges_data["data"]:
+                break
+
+            completed_challenges.extend(challenges_data["data"])
+            page += 1
+
+            # Limit to last 100 challenges for performance
+            if len(completed_challenges) >= 100:
+                completed_challenges = completed_challenges[:100]
+                break
+
+        # Sort challenges by completion time
+        completed_challenges.sort(key=lambda x: x["completedAt"])
+
+        # Create history from completed challenges
+        history = []
+        from datetime import datetime
+
+        for challenge in completed_challenges:
+            completed_date = datetime.fromisoformat(
+                challenge["completedAt"].replace("Z", "+00:00")
+            ).strftime("%Y-%m-%d")
+            # Check if we already have an entry for this date
+            date_entry = next(
+                (entry for entry in history if entry["date"] == completed_date), None
+            )
+            if date_entry:
+                date_entry["completed_katas"] += 1
+            else:
+                # For each kata, rough estimate of honor gained (typical kata gives 2-8 honor)
+                kata_honor = challenge.get("honor", 4)  # default to 4 if not provided
+                history.append(
+                    {
+                        "date": completed_date,
+                        "completed_katas": 1,
+                        "honor": kata_honor,
+                        "rank": data["ranks"]["overall"]["name"],
+                    }
+                )
+
+        # Prepare initial stats message
+        current_stats = (
+            f"📊 Your Codewars Statistics:\n\n"
+            f"Username: {data['username']}\n"
+            f"Rank: {data['ranks']['overall']['name']}\n"
+            f"Honor: {data['honor']}\n"
+            f"Total Completed Kata: {data['codeChallenges']['totalCompleted']}\n\n"
+            f"Recent Completed Challenges:\n"
+        )
+
+        # Add most recent 5 challenges
+        for challenge in completed_challenges[-5:]:
+            completed_at = datetime.fromisoformat(
+                challenge["completedAt"].replace("Z", "+00:00")
+            ).strftime("%Y-%m-%d %H:%M")
+            current_stats += f"• {challenge['name']} ({completed_at})\n"
+
+        # Save stats for later - we'll combine with progress stats
+
+        if not history:
+            logger.debug("No history data available")
+            return
+
+        # Generate visualization
+        logger.debug("Starting visualization generation")
+
+        try:
+            # Prepare plotting data
+            dates = [entry["date"] for entry in history]
+            katas = [entry["completed_katas"] for entry in history]
+            honor = [entry["honor"] for entry in history]
+
+            # Create plot with daily and cumulative stats
+            plt.style.use("dark_background")
+            fig, ax1 = plt.subplots(figsize=(15, 6))
+
+            # Plot daily completed katas
+            daily_completions = [entry["completed_katas"] for entry in history]
+            cumulative_katas = []
+            total = 0
+            for count in daily_completions:
+                total += count
+                cumulative_katas.append(total)
+
+            # Plot daily completions as bars
+            ax1.bar(dates, daily_completions, color="cyan", alpha=0.5)
+            ax1.set_title("Daily Completed Katas")
+            ax1.set_xlabel("Date")
+            ax1.set_ylabel("Katas Completed")
+            ax1.tick_params(axis="x", rotation=45)
+
+            # Add cumulative line
+            ax1_twin = ax1.twinx()
+            ax1_twin.plot(dates, cumulative_katas, color="yellow", linewidth=2)
+            ax1_twin.set_ylabel("Total Katas", color="yellow")
+            ax1_twin.tick_params(axis="y", colors="yellow")
+
+            # Plot honor points
+            cumulative_honor = []
+            total_honor = 0
+            for h in honor:
+                total_honor += h
+                cumulative_honor.append(total_honor)
+
+            plt.suptitle(f'Codewars Progress for {data["username"]}')
+            plt.tight_layout()
+
+            # Save and send plot
+            logger.debug("Saving plot to buffer")
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+            buf.seek(0)
+
+            # Calculate activity stats
+            total_days = len(dates)
+            active_days = len([k for k in daily_completions if k > 0])
+            avg_per_active_day = (
+                sum(daily_completions) / active_days if active_days > 0 else 0
+            )
+            max_day_katas = max(daily_completions)
+            max_day_date = dates[daily_completions.index(max_day_katas)]
+
+            # Combine all stats into one message
+            complete_stats = (
+                current_stats
+                + "\n"
+                + (
+                    f"📈 Activity Statistics:\n\n"
+                    f"Total Days Tracked: {total_days}\n"
+                    f"Active Days: {active_days}\n"
+                    f"Completion Rate: {(active_days/total_days*100):.1f}%\n"
+                    f"Average Katas per Active Day: {avg_per_active_day:.1f}\n"
+                    f"Most Productive Day: {max_day_date} ({max_day_katas} katas)\n\n"
+                    f"Progress Summary:\n"
+                    f"├ Total Katas Completed: {cumulative_katas[-1]}\n"
+                    f"└ Total Honor Earned: {cumulative_honor[-1]} (Current: {data['honor']})"
+                )
+            )
+
+            # Send combined stats and visualization
+            await reply_to_message(update.message, text=complete_stats)
+            logger.debug("Sending visualization")
+            await reply_to_message(update.message, photo=buf)
+
+        except Exception as viz_error:
+            logger.error(f"Visualization error: {viz_error}", exc_info=True)
+            await reply_to_message(
+                update.message,
+                text="❌ Failed to generate visualization. Please try again later.",
+            )
+        finally:
+            plt.close("all")
+
     except Exception as e:
-        await update.message.reply_text("Error occurred while fetching stats.")
+        logger.error(f"Error in my_stats: {e}", exc_info=True)
+        await reply_to_message(
+            update.message, text="❌ An error occurred. Please try again later."
+        )
 
 
 async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -292,9 +509,7 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send stats message
         stats = f"📊 Statistics for group: {group['name']}\n"
         for username, katas, honor in zip(usernames, completed_katas, honor_points):
-            stats += f"\n{username}:\n"
-            stats += f"├ Completed Katas: {katas}\n"
-            stats += f"└ Honor Points: {honor}\n"
+            stats += f"\n{username}: {completed_katas}\n"
 
         # Send text stats and image
         await reply_to_message(update.message, text=stats)
