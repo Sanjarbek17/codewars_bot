@@ -13,7 +13,7 @@ from ..database.database import (
     get_group,
 )
 from ..tools.api import get_user_profile, get_completed_challenges
-from ..tools.visualizations import (
+from ..tools.visualizations_lite import (
     create_progress_plot,
     create_group_comparison_plot,
     create_weekly_activity_plot,
@@ -36,9 +36,6 @@ async def reply_to_message(message, text=None, photo=None, reply_markup=None):
 
         if text:
             await message.get_bot().send_message(text=text, **kwargs)
-
-        if photo:
-            await message.get_bot().send_photo(photo=photo, **kwargs)
 
     except Exception as e:
         logger.error(f"Error in reply_to_message: {e}", exc_info=True)
@@ -203,8 +200,8 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await reply_to_message(update.message, text=current_stats)
             return
 
-        # Generate visualization
-        buf = create_progress_plot(history, data["username"])
+        # Generate visualization as text
+        plot_text = create_progress_plot(history, data["username"])
 
         # Calculate activity stats
         dates = [entry["date"] for entry in history]
@@ -234,9 +231,9 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"└ Total Honor Earned: {total_honor} (Current: {data['honor']})"
         )
 
-        # Send combined stats and visualization
+        # Send stats and visualization
         await reply_to_message(update.message, text=complete_stats)
-        await reply_to_message(update.message, photo=buf)
+        await reply_to_message(update.message, text=plot_text)
 
     except Exception as e:
         logger.error(f"Error in my_stats: {e}", exc_info=True)

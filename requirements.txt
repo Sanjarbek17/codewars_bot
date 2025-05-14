@@ -7,5 +7,4 @@ requests>=2.31.0
 tinydb>=4.8.0
 
 # Data visualization
-matplotlib>=3.8.0
-numpy>=1.24.0  # Required by matplotlib
+plotext>=5.2.8  # Lightweight plotting library
