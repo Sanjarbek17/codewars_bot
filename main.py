@@ -1,5 +1,7 @@
+import io
 import logging
 import os
+from matplotlib import pyplot as plt
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 import requests
@@ -169,7 +171,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show group statistics."""
+    """Show group statistics with charts."""
     user_id = update.effective_user.id
     Group = Query()
     user_groups = groups_table.search(Group.members.any([user_id]))
@@ -179,7 +181,12 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     for group in user_groups:
-        stats = f"📈 Statistics for group: {group['name']}\n\n"
+        # Collect data for visualization
+        usernames = []
+        completed_katas = []
+        honor_points = []
+
+        # Get stats for each member
         for member_id in group["members"]:
             User = Query()
             user = users_table.get(User.telegram_id == member_id)
@@ -190,15 +197,78 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     if response.status_code == 200:
                         data = response.json()
-                        stats += (
-                            f"User: {data['username']}\n"
-                            f"Completed Kata: {data['codeChallenges']['totalCompleted']}\n"
-                            f"Rank: {data['ranks']['overall']['name']}\n\n"
-                        )
+                        usernames.append(data["username"])
+                        completed_katas.append(data["codeChallenges"]["totalCompleted"])
+                        honor_points.append(data["honor"])
                 except:
-                    stats += f"Error fetching stats for {user['codewars_username']}\n\n"
+                    continue
 
+        if not usernames:
+            await update.message.reply_text(
+                f"No data available for group: {group['name']}"
+            )
+            continue
+
+        # Create the visualization
+        plt.figure(figsize=(12, 6))
+        plt.style.use("dark_background")  # Using dark theme for better visibility
+
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+        # Plot completed katas
+        bars1 = ax1.bar(usernames, completed_katas)
+        ax1.set_title("Completed Katas")
+        ax1.set_xlabel("Users")
+        ax1.set_ylabel("Number of Katas")
+        ax1.tick_params(axis="x", rotation=45)
+        # Add value labels on the bars
+        for bar in bars1:
+            height = bar.get_height()
+            ax1.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                f"{int(height)}",
+                ha="center",
+                va="bottom",
+            )
+
+        # Plot honor points
+        bars2 = ax2.bar(usernames, honor_points)
+        ax2.set_title("Honor Points")
+        ax2.set_xlabel("Users")
+        ax2.set_ylabel("Honor")
+        ax2.tick_params(axis="x", rotation=45)
+        # Add value labels on the bars
+        for bar in bars2:
+            height = bar.get_height()
+            ax2.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                f"{int(height)}",
+                ha="center",
+                va="bottom",
+            )
+
+        plt.suptitle(f'Codewars Statistics for Group: {group["name"]}')
+        plt.tight_layout()  # Adjust layout to prevent overlap
+
+        # Save plot to bytes buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+        buf.seek(0)
+        plt.close()  # Close the figure to free memory
+
+        # Send stats message
+        stats = f"📊 Statistics for group: {group['name']}\n"
+        for username, katas, honor in zip(usernames, completed_katas, honor_points):
+            stats += f"\n{username}:\n"
+            stats += f"├ Completed Katas: {katas}\n"
+            stats += f"└ Honor Points: {honor}\n"
+
+        # Send text stats and image
         await update.message.reply_text(stats)
+        await update.message.reply_photo(buf)
 
 
 def main():

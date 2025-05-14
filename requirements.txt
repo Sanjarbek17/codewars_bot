@@ -2,3 +2,4 @@ python-telegram-bot
 tinydb
 requests
 python-dotenv
+matplotlib
