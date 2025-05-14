@@ -1,7 +1,7 @@
 from tinydb import TinyDB, Query
 
 # Initialize TinyDB
-db = TinyDB("handle_bot/codewars_bot/database/db.json")
+db = TinyDB("db.json")
 users_table = db.table("users")
 groups_table = db.table("groups")
 
