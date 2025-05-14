@@ -3,7 +3,14 @@ import logging
 import os
 from matplotlib import pyplot as plt
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+)
 import requests
 from tinydb import TinyDB, Query
 import json
@@ -23,24 +30,41 @@ groups_table = db.table("groups")
 CODEWARS_API_BASE = "https://www.codewars.com/api/v1/users/"
 
 
+async def reply_to_message(message, text=None, photo=None):
+    """Helper function to reply to messages, handling both regular groups and forum topics."""
+    kwargs = {
+        "message_thread_id": (
+            message.message_thread_id if message.is_topic_message else None
+        ),
+        "chat_id": message.chat_id,
+        "reply_to_message_id": message.message_id,
+    }
+
+    if text:
+        await message.get_bot().send_message(text=text, **kwargs)
+    if photo:
+        await message.get_bot().send_photo(photo=photo, **kwargs)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message when the command /start is issued."""
-    await update.message.reply_text(
-        "Welcome to the Codewars Tracker Bot! 🎯\n\n"
+    await reply_to_message(
+        update.message,
+        text="Welcome to the Codewars Tracker Bot! 🎯\n\n"
         "Available commands:\n"
         "/register [codewars_username] - Register your Codewars account\n"
-        "/creategroup [group_name] - Create a new group\n"
         "/joingroup - See available groups to join\n"
         "/mystats - See your Codewars statistics\n"
-        "/groupstats - See your group's statistics"
+        "/groupstats - See your group's statistics",
     )
 
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Register a user with their Codewars username."""
     if len(context.args) != 1:
-        await update.message.reply_text(
-            "Please provide your Codewars username: /register [username]"
+        await reply_to_message(
+            update.message,
+            text="Please provide your Codewars username: /register [username]",
         )
         return
 
@@ -51,8 +75,9 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = requests.get(f"{CODEWARS_API_BASE}{codewars_username}")
         if response.status_code != 200:
-            await update.message.reply_text(
-                "Invalid Codewars username. Please check and try again."
+            await reply_to_message(
+                update.message,
+                text="Invalid Codewars username. Please check and try again.",
             )
             return
 
@@ -67,8 +92,9 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             User.telegram_id == telegram_id,
         )
 
-        await update.message.reply_text(
-            f"Successfully registered with Codewars username: {codewars_username}"
+        await reply_to_message(
+            update.message,
+            text=f"Successfully registered with Codewars username: {codewars_username}",
         )
 
     except Exception as e:
@@ -80,8 +106,8 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def create_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Create a new group."""
     if len(context.args) != 1:
-        await update.message.reply_text(
-            "Please provide a group name: /creategroup [name]"
+        await reply_to_message(
+            update.message, text="Please provide a group name: /creategroup [name]"
         )
         return
 
@@ -90,14 +116,18 @@ async def create_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Group = Query()
     if groups_table.search(Group.name == group_name):
-        await update.message.reply_text("A group with this name already exists!")
+        await reply_to_message(
+            update.message, text="A group with this name already exists!"
+        )
         return
 
     groups_table.insert(
         {"name": group_name, "creator_id": creator_id, "members": [creator_id]}
     )
 
-    await update.message.reply_text(f"Group '{group_name}' created successfully!")
+    await reply_to_message(
+        update.message, text=f"Group '{group_name}' created successfully!"
+    )
 
 
 async def join_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -267,8 +297,44 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stats += f"└ Honor Points: {honor}\n"
 
         # Send text stats and image
-        await update.message.reply_text(stats)
-        await update.message.reply_photo(buf)
+        await reply_to_message(update.message, text=stats)
+        await reply_to_message(update.message, photo=buf)
+
+
+async def handle_group_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle when bot is added to a group or group is updated."""
+    if update.message and update.message.new_chat_members:
+        for member in update.message.new_chat_members:
+            if member.id == context.bot.id:  # Bot was added to a group
+                group_name = update.message.chat.title
+                group_id = update.message.chat.id
+                chat_type = update.message.chat.type
+
+                Group = Query()
+                # Check if group already exists
+                if not groups_table.search(Group.group_id == group_id):
+                    groups_table.insert(
+                        {
+                            "name": group_name,
+                            "group_id": group_id,
+                            "chat_type": chat_type,
+                            "members": [],
+                            "creator_id": update.message.from_user.id,
+                            "is_forum": (
+                                update.message.chat.is_forum
+                                if hasattr(update.message.chat, "is_forum")
+                                else False
+                            ),
+                        }
+                    )
+
+                    await reply_to_message(
+                        f"Thanks for adding me to {group_name}! 🎯\n\n"
+                        "Group members can use these commands:\n"
+                        "/register [codewars_username] - Register your Codewars account\n"
+                        "/mystats - See your Codewars statistics\n"
+                        "/groupstats - See this group's statistics"
+                    )
 
 
 def main():
@@ -293,9 +359,26 @@ def main():
     application.add_handler(CommandHandler("mystats", my_stats))
     application.add_handler(CommandHandler("groupstats", group_stats))
     application.add_handler(CallbackQueryHandler(button_callback))
+    # Add handler for group updates (when bot is added to group)
+    application.add_handler(CommandHandler("help", start))  # Add help command
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_group_update)
+    )
 
-    # Start the bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start the bot with specific update types and settings
+    application.run_polling(
+        allowed_updates=[
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "callback_query",
+            "chat_member",
+            "my_chat_member",
+            "chat_join_request",
+        ],
+        drop_pending_updates=True,  # Ignore any pending updates
+    )
 
 
 if __name__ == "__main__":
