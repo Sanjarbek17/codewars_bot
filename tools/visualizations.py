@@ -1,5 +1,4 @@
-import numpy as np
-import matplotlib.pyplot as plt
+import plotext as plt
 from datetime import datetime
 import io
 
