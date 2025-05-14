@@ -81,7 +81,18 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
         await reply_to_message(
             update.message,
-            text="Please provide your Codewars username: /register [username]",
+            text=(
+                "📝 How to register:\n\n"
+                "Use the command: /register [username]\n\n"
+                "Examples:\n"
+                "• /register john_doe\n"
+                "• /register codewars_ninja\n\n"
+                "To find your Codewars username:\n"
+                "1. Log in to codewars.com\n"
+                "2. Click your profile picture\n"
+                "3. Your username is in the URL: codewars.com/users/[username]\n\n"
+                "Note: Use your exact Codewars username, it's case-sensitive!"
+            ),
         )
         return
 
@@ -131,10 +142,16 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             User.telegram_id == telegram_id,
         )
 
-        await reply_to_message(
-            update.message,
-            text=f"Successfully registered with Codewars username: {codewars_username}",
+        # Prepare success message with next steps
+        success_message = (
+            f"✅ Successfully registered with Codewars username: {codewars_username}\n\n"
+            "What's next?\n"
+            "• Use /mystats to see your progress\n"
+            "• Use /joingroup to join a group and compare stats with others\n"
+            "• Complete more katas on codewars.com to see your progress!\n\n"
+            "Your stats will be automatically tracked and updated."
         )
+        await reply_to_message(update.message, text=success_message)
 
     except Exception as e:
         await update.message.reply_text(
