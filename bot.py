@@ -8,7 +8,7 @@ from telegram.ext import (
     filters,
 )
 from config import TELEGRAM_BOT_TOKEN, logger
-from handlers import (
+from bot.handlers import (
     start,
     register,
     my_stats,

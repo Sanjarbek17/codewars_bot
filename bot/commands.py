@@ -2,9 +2,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from datetime import datetime, timedelta
 import config
-import database as db
-import api
-import visualizations as viz
+import database.database as db
+import tools.api as api
+import tools.visualizations as viz
 
 
 async def reply_to_message(message, text=None, photo=None):

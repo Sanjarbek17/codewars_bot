@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from datetime import datetime, timedelta
 from config import logger
-from database import (
+from database.database import (
     get_user,
     update_user,
     get_user_groups,
@@ -12,8 +12,8 @@ from database import (
     add_user_to_group,
     get_group,
 )
-from api import get_user_profile, get_completed_challenges
-from visualizations import (
+from tools.api import get_user_profile, get_completed_challenges
+from tools.visualizations import (
     create_progress_plot,
     create_group_comparison_plot,
     create_weekly_activity_plot,
