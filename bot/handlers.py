@@ -1,10 +1,10 @@
 """Handler functions for bot commands."""
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import CallbackContext
 from datetime import datetime, timedelta
-from handle_bot.codewars_bot.config import logger
-from ..database.database import (
+from config import logger
+from database.database import (
     get_user,
     update_user,
     get_user_groups,
@@ -12,21 +12,17 @@ from ..database.database import (
     add_user_to_group,
     get_group,
 )
-from ..tools.api import get_user_profile, get_completed_challenges
-from ..tools.visualizations_lite import (
-    create_progress_plot,
+from tools.api import get_user_profile, get_completed_challenges
+from tools.visualizations_lite import (
     create_group_comparison_plot,
     create_weekly_activity_plot,
 )
 
 
-async def reply_to_message(message, text=None, photo=None, reply_markup=None):
+def reply_to_message(message, text=None, photo=None, reply_markup=None):
     """Helper function to reply to messages."""
     try:
         kwargs = {
-            "message_thread_id": (
-                message.message_thread_id if message.is_topic_message else None
-            ),
             "chat_id": message.chat_id,
             "reply_to_message_id": message.message_id,
         }
@@ -34,15 +30,18 @@ async def reply_to_message(message, text=None, photo=None, reply_markup=None):
         if reply_markup:
             kwargs["reply_markup"] = reply_markup
 
+        bot = message.bot
         if text:
-            await message.get_bot().send_message(text=text, **kwargs)
+            bot.send_message(text=text, **kwargs)
+        if photo:
+            bot.send_photo(photo=photo, **kwargs)
 
     except Exception as e:
         logger.error(f"Error in reply_to_message: {e}", exc_info=True)
         raise
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     """Send welcome message when the command /start is issued."""
     welcome_text = (
         "Welcome to the Codewars Tracker Bot! 🎯\n\n"
@@ -52,10 +51,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/mystats - See your Codewars statistics\n"
         "/groupstats - See your group's statistics"
     )
-    await reply_to_message(update.message, text=welcome_text)
+    reply_to_message(update.message, text=welcome_text)
 
 
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def register(update: Update, context: CallbackContext):
     """Register a user with their Codewars username."""
     if len(context.args) != 1:
         help_text = (
@@ -70,7 +69,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3. Your username is in the URL: codewars.com/users/[username]\n\n"
             "Note: Use your exact Codewars username, it's case-sensitive!"
         )
-        await reply_to_message(update.message, text=help_text)
+        reply_to_message(update.message, text=help_text)
         return
 
     codewars_username = context.args[0]
@@ -79,7 +78,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get user data from Codewars
     user_data = get_user_profile(codewars_username)
     if not user_data:
-        await reply_to_message(
+        reply_to_message(
             update.message,
             text="Invalid Codewars username. Please check and try again.",
         )
@@ -123,10 +122,10 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Complete more katas on codewars.com to see your progress!\n\n"
         "Your stats will be automatically tracked and updated."
     )
-    await reply_to_message(update.message, text=success_message)
+    reply_to_message(update.message, text=success_message)
 
 
-async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def my_stats(update: Update, context: CallbackContext):
     """Show user's Codewars statistics with historical progress."""
     logger.debug("Starting my_stats command handling")
 
@@ -135,7 +134,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = get_user(user_id)
 
         if not user:
-            await reply_to_message(
+            reply_to_message(
                 update.message,
                 text="Please register first using /register [codewars_username]",
             )
@@ -146,7 +145,7 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = get_user_profile(user["codewars_username"])
 
         if not data:
-            await reply_to_message(
+            reply_to_message(
                 update.message,
                 text="Failed to fetch Codewars data. Please try again later.",
             )
@@ -197,11 +196,20 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current_stats += f"• {challenge['name']} ({completed_at})\n"
 
         if not history:
-            await reply_to_message(update.message, text=current_stats)
+            reply_to_message(update.message, text=current_stats)
             return
 
-        # Generate visualization as text
-        plot_text = create_progress_plot(history, data["username"])
+        # Convert history dates to %d/%m/%Y for plotext compatibility
+        history_for_plot = []
+        for entry in history:
+            try:
+                date_obj = datetime.strptime(entry["date"], "%Y-%m-%d")
+                date_str = date_obj.strftime("%d/%m/%Y")
+            except Exception:
+                date_str = entry["date"]
+            entry_copy = entry.copy()
+            entry_copy["date"] = date_str
+            history_for_plot.append(entry_copy)
 
         # Calculate activity stats
         dates = [entry["date"] for entry in history]
@@ -231,21 +239,21 @@ async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"└ Total Honor Earned: {total_honor} (Current: {data['honor']})"
         )
 
-        # Send stats and visualization
-        await reply_to_message(update.message, text=complete_stats)
-        await reply_to_message(update.message, text=plot_text)
+        # Combine stats and plot into one clean message
+        full_message = complete_stats
+        reply_to_message(update.message, text=full_message)
 
     except Exception as e:
         logger.error(f"Error in my_stats: {e}", exc_info=True)
-        await reply_to_message(
+        reply_to_message(
             update.message, text="❌ An error occurred. Please try again later."
         )
 
 
-async def create_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def create_group(update: Update, context: CallbackContext):
     """Create a new group."""
     if len(context.args) != 1:
-        await reply_to_message(
+        reply_to_message(
             update.message, text="Please provide a group name: /creategroup [name]"
         )
         return
@@ -254,20 +262,18 @@ async def create_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     creator_id = update.effective_user.id
 
     if db_create_group(group_name, creator_id):
-        await reply_to_message(
+        reply_to_message(
             update.message, text=f"Group '{group_name}' created successfully!"
         )
     else:
-        await reply_to_message(
-            update.message, text="A group with this name already exists!"
-        )
+        reply_to_message(update.message, text="A group with this name already exists!")
 
 
-async def join_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def join_group(update: Update, context: CallbackContext):
     """Show available groups to join."""
     groups = get_user_groups(update.effective_user.id)
     if not groups:
-        await reply_to_message(update.message, text="No groups available to join!")
+        reply_to_message(update.message, text="No groups available to join!")
         return
 
     keyboard = []
@@ -277,15 +283,15 @@ async def join_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await reply_to_message(
+    reply_to_message(
         update.message, text="Select a group to join:", reply_markup=reply_markup
     )
 
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_callback(update: Update, context: CallbackContext):
     """Handle button callbacks."""
     query = update.callback_query
-    await query.answer()
+    query.answer()
 
     if query.data.startswith("join_"):
         group_name = query.data[5:]
@@ -293,20 +299,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         group = get_group(group_name)
         if not group:
-            await query.edit_message_text("Group not found!")
+            query.edit_message_text("Group not found!")
             return
 
         if user_id in group["members"]:
-            await query.edit_message_text(f"You're already a member of {group_name}!")
+            query.edit_message_text(f"You're already a member of {group_name}!")
             return
 
         if add_user_to_group(group_name, user_id):
-            await query.edit_message_text(f"Successfully joined {group_name}!")
+            query.edit_message_text(f"Successfully joined {group_name}!")
         else:
-            await query.edit_message_text("Failed to join group. Please try again.")
+            query.edit_message_text("Failed to join group. Please try again.")
 
 
-async def handle_group_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_group_update(update: Update, context: CallbackContext):
     """Handle when bot is added to a group."""
     if update.message and update.message.new_chat_members:
         for member in update.message.new_chat_members:
@@ -323,16 +329,16 @@ async def handle_group_update(update: Update, context: ContextTypes.DEFAULT_TYPE
                         "/mystats - See your Codewars statistics\n"
                         "/groupstats - See this group's statistics"
                     )
-                    await reply_to_message(update.message, text=welcome_text)
+                    reply_to_message(update.message, text=welcome_text)
 
 
-async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def group_stats(update: Update, context: CallbackContext):
     """Show group statistics with charts."""
     user_id = update.effective_user.id
     user_groups = get_user_groups(user_id)
 
     if not user_groups:
-        await reply_to_message(update.message, text="You're not a member of any group!")
+        reply_to_message(update.message, text="You're not a member of any group!")
         return
 
     for group in user_groups:
@@ -356,7 +362,7 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
 
         if not usernames:
-            await reply_to_message(
+            reply_to_message(
                 update.message, text=f"No data available for group: {group['name']}"
             )
             continue
@@ -370,17 +376,17 @@ async def group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stats += f"\n{username}: {katas} katas, {honor} honor"
 
         # Send text stats and image
-        await reply_to_message(update.message, text=stats)
-        await reply_to_message(update.message, photo=buf)
+        reply_to_message(update.message, text=stats)
+        reply_to_message(update.message, photo=buf)
 
 
-async def daily_group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def daily_group_stats(update: Update, context: CallbackContext):
     """Show today's and yesterday's kata completion statistics for group members."""
     user_id = update.effective_user.id
     user_groups = get_user_groups(user_id)
 
     if not user_groups:
-        await reply_to_message(update.message, text="You're not a member of any group!")
+        reply_to_message(update.message, text="You're not a member of any group!")
         return
 
     today = datetime.now().strftime("%Y-%m-%d")
@@ -423,7 +429,7 @@ async def daily_group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
 
         if not member_stats:
-            await reply_to_message(
+            reply_to_message(
                 update.message, text=f"No data available for group: {group['name']}"
             )
             continue
@@ -474,17 +480,17 @@ async def daily_group_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Send stats and visualization
-        await reply_to_message(update.message, text=stats_msg)
-        await reply_to_message(update.message, photo=buf)
+        reply_to_message(update.message, text=stats_msg)
+        reply_to_message(update.message, photo=buf)
 
 
-async def weekly_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def weekly_stats(update: Update, context: CallbackContext):
     """Show weekly kata completion statistics for group members."""
     user_id = update.effective_user.id
     user_groups = get_user_groups(user_id)
 
     if not user_groups:
-        await reply_to_message(update.message, text="You're not a member of any group!")
+        reply_to_message(update.message, text="You're not a member of any group!")
         return
 
     # Get dates for the last 7 days
@@ -527,7 +533,7 @@ async def weekly_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
 
         if not member_stats:
-            await reply_to_message(
+            reply_to_message(
                 update.message, text=f"No data available for group: {group['name']}"
             )
             continue
@@ -573,11 +579,11 @@ async def weekly_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Send stats and visualization
-        await reply_to_message(update.message, text=stats_msg)
-        await reply_to_message(update.message, photo=buf)
+        reply_to_message(update.message, text=stats_msg)
+        reply_to_message(update.message, photo=buf)
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def help_command(update: Update, context: CallbackContext):
     """Show list of commands."""
     help_text = """
 🤖 Available Commands:
@@ -593,4 +599,4 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 Need help? Message @YourAdminUsername
 """
-    await reply_to_message(update.message, text=help_text)
+    reply_to_message(update.message, text=help_text)

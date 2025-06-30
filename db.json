@@ -1,0 +1,26 @@
+{
+    "users": {
+        "1": {
+            "telegram_id": 6389775623,
+            "codewars_username": "Sanjar1218",
+            "completed_katas": 704,
+            "history": [
+                {
+                    "date": "2025-06-30",
+                    "completed_katas": 704,
+                    "honor": 2166,
+                    "rank": "3 kyu"
+                }
+            ]
+        }
+    },
+    "groups": {
+        "1": {
+            "name": "python7",
+            "creator_id": 6389775623,
+            "members": [
+                6389775623
+            ]
+        }
+    }
+}

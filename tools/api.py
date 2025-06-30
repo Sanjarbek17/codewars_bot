@@ -1,5 +1,5 @@
 import requests
-from ..config import CODEWARS_API_BASE, logger
+from config import CODEWARS_API_BASE, logger
 
 
 def get_user_profile(username):

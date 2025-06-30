@@ -2,41 +2,6 @@ import plotext as plt
 from datetime import datetime
 import io
 
-
-def create_progress_plot(history, username):
-    """Create progress visualization using plotext."""
-    plt.clear_figure()
-    plt.theme("dark")
-
-    dates = [entry["date"] for entry in history]
-    daily_completions = [entry["completed_katas"] for entry in history]
-
-    # Calculate cumulative stats
-    cumulative_katas = []
-    total = 0
-    for count in daily_completions:
-        total += count
-        cumulative_katas.append(total)
-
-    # Plot daily completions as bars
-    plt.bar(dates, daily_completions, width=0.15)
-
-    # Plot cumulative line
-    plt.plot(dates, cumulative_katas, marker="dot")
-
-    plt.title(f"Codewars Progress for {username}")
-    plt.xlabel("Date")
-    plt.ylabel("Katas")
-
-    # Generate plot as string
-    plot_str = plt.build()
-
-    # Create a text buffer with the ASCII plot
-    buf = io.StringIO()
-    buf.write(f"```\n{plot_str}\n```")
-    return buf.getvalue()
-
-
 def create_group_comparison_plot(
     usernames,
     data1,

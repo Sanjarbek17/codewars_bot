@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import CallbackContext
 from datetime import datetime, timedelta
 import config
 import database.database as db
@@ -7,29 +7,23 @@ import tools.api as api
 import tools.visualizations as viz
 
 
-async def reply_to_message(message, text=None, photo=None):
+def reply_to_message(message, text=None, photo=None):
     """Helper function to reply to messages."""
     try:
         kwargs = {
-            "message_thread_id": (
-                message.message_thread_id if message.is_topic_message else None
-            ),
             "chat_id": message.chat_id,
             "reply_to_message_id": message.message_id,
         }
-
         if text:
-            await message.get_bot().send_message(text=text, **kwargs)
-
+            message.bot.send_message(text=text, **kwargs)
         if photo:
-            await message.get_bot().send_photo(photo=photo, **kwargs)
-
+            message.bot.send_photo(photo=photo, **kwargs)
     except Exception as e:
         config.logger.error(f"Error in reply_to_message: {e}", exc_info=True)
         raise
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     """Send welcome message when the command /start is issued."""
     welcome_text = (
         "Welcome to the Codewars Tracker Bot! 🎯\n\n"
@@ -39,10 +33,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/mystats - See your Codewars statistics\n"
         "/groupstats - See your group's statistics"
     )
-    await reply_to_message(update.message, text=welcome_text)
+    reply_to_message(update.message, text=welcome_text)
 
 
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def register(update: Update, context: CallbackContext):
     """Register a user with their Codewars username."""
     if len(context.args) != 1:
         help_text = (
@@ -57,7 +51,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3. Your username is in the URL: codewars.com/users/[username]\n\n"
             "Note: Use your exact Codewars username, it's case-sensitive!"
         )
-        await reply_to_message(update.message, text=help_text)
+        reply_to_message(update.message, text=help_text)
         return
 
     codewars_username = context.args[0]
@@ -66,7 +60,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Verify username and get data
     user_data = api.get_user_profile(codewars_username)
     if not user_data:
-        await reply_to_message(
+        reply_to_message(
             update.message,
             text="Invalid Codewars username. Please check and try again.",
         )
@@ -110,7 +104,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Complete more katas on codewars.com to see your progress!\n\n"
         "Your stats will be automatically tracked and updated."
     )
-    await reply_to_message(update.message, text=success_message)
+    reply_to_message(update.message, text=success_message)
 
 
 # Add other command handlers here (my_stats, group_stats, etc.)
